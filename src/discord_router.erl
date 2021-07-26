@@ -3,7 +3,7 @@
 -include_lib("kernel/include/logger.hrl").
 
 %% public API
--export([start_link/0, set_routes/3, route_msg/2, route_react/2]).
+-export([start_link/0, set_routes/3, route_mention_msg/2, route_msg/2, route_react/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2]).
@@ -19,6 +19,9 @@ set_routes(Pid, Msg, React) ->
 route_msg(Pid, Msg) ->
     gen_server:cast(Pid, {msg, Msg}).
 
+route_mention_msg(Pid, Msg) ->
+    gen_server:cast(Pid, {mention_msg, Msg}).
+
 route_react(Pid, Msg) ->
     gen_server:cast(Pid, {react, Msg}).
 
@@ -30,7 +33,19 @@ init([]) ->
 handle_call({set_routes, Routes}, _From, _State) ->
     {reply, ok, Routes}.
 
-handle_cast({msg, Msg=#{<<"content">> := Content}}, State=#{msg := Routes}) ->
+handle_cast({msg, Msg = #{<<"content">> := Content}}, State = #{msg := Routes}) ->
+    case binary:split(Content, <<" ">>, [global, trim_all]) of
+        [Cmd|Rest] ->
+            ?LOG_INFO("looking up ~p", [Cmd]),
+            case maps:get(Cmd, Routes, undefined) of
+                undefined -> ok;
+                #{call := {M, F, A}} ->
+                    ApiPid = discordant_sup:get_api_server(),
+                    handle_response(apply(M, F, A ++ [Rest, ApiPid, Msg]), Msg)
+            end
+    end,
+    {noreply, State};
+handle_cast({mention_msg, Msg = #{<<"content">> := Content}}, State = #{msg := Routes}) ->
     case binary:split(Content, <<" ">>, [global, trim_all]) of
         [_, Cmd|Rest] ->
             ?LOG_INFO("looking up ~p", [Cmd]),

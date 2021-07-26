@@ -112,7 +112,12 @@ await_close(_, _, State) ->
 
 connected(cast, heartbeat,
           S=#state{connection=Connection, sequence=Seq, session_id=Sid}) ->
-    ?LOG_INFO("sending heartbeat for session ~p", Sid),
+    case Sid of
+        undefined ->
+            ?LOG_INFO("sending heartbeat for session 'undefined'");
+        _ ->
+            ?LOG_INFO("sending heartbeat for session ~p", Sid)
+    end,
     send_message(Connection, 1, Seq),
     {next_state, await_ack, S};
 connected({call, From}, user_id, State=#state{user_id=UserId}) ->
@@ -308,10 +313,9 @@ handle_mentions(#{<<"author">> := #{<<"id">> := UID}}, #state{user_id=UID}) ->
     ok;
 handle_mentions(Msg=#{<<"mentions">> := Mentions}, #state{user_id=UID}) ->
     Me = lists:filter(fun(#{<<"id">> := ID}) -> ID =:= UID end, Mentions),
-    if length(Me) > 0 ->
-           Router = discordant_sup:get_router(),
-           discord_router:route_msg(Router, Msg);
-       true -> ok
+    Router = discordant_sup:get_router(),
+    if length(Me) > 0 -> discord_router:route_mention_msg(Router, Msg);
+       true -> discord_router:route_msg(Router, Msg)
     end;
 handle_mentions(_Msg, _State) ->
     ok.
