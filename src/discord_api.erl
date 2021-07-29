@@ -2,21 +2,36 @@
 -behaviour(gen_server).
 -include_lib("kernel/include/logger.hrl").
 
--export([start_link/0, get_gateway/1, send_message/3, send_message_reply/3,
-         send_reaction/4, get_guild/2, get_roles/2, create_role/3,
-         get_message/3, get_user/2, add_member_role/4, delete_role/3,
-         get_guild_members/2, connect/2, remove_member_role/4]).
+-export([
+    start_link/0,
+    get_gateway/1,
+    send_message/3,
+    send_message_reply/3,
+    send_reaction/4,
+    get_guild/2,
+    get_roles/2,
+    create_role/3,
+    get_message/3,
+    get_user/2,
+    add_member_role/4,
+    delete_role/3,
+    get_guild_members/2,
+    connect/2,
+    remove_member_role/4
+]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(DISCORD_HOST, "discord.com").
 
--record(connection, {pid :: pid(),
-                     ref :: reference()
-                    }).
--record(state, {url :: string() | undefined,
-                token :: string() | undefined,
-                connection :: #connection{} | undefined
-               }).
+-record(connection, {
+    pid :: pid(),
+    ref :: reference()
+}).
+-record(state, {
+    url :: string() | undefined,
+    token :: string() | undefined,
+    connection :: #connection{} | undefined
+}).
 
 %% API functions
 
@@ -103,8 +118,7 @@ handle_call({get_roles, GuildId}, _From, State) ->
     {reply, R, State};
 handle_call({get_message, ChannelId, MessageId}, _From, State) ->
     ?LOG_INFO("requesting message ~s:~s", [ChannelId, MessageId]),
-    R = hget(<<"/api/channels/", ChannelId/binary, "/messages/",
-               MessageId/binary>>, State),
+    R = hget(<<"/api/channels/", ChannelId/binary, "/messages/", MessageId/binary>>, State),
     {reply, R, State};
 handle_call({get_user, UserId}, _From, State) ->
     ?LOG_INFO("requesting user ~s", [UserId]),
@@ -119,61 +133,82 @@ handle_cast({connect, Token}, S) ->
     {ok, ConnPid} = gun:open(?DISCORD_HOST, 443),
     {ok, _Protocol} = gun:await_up(ConnPid),
     MRef = monitor(process, ConnPid),
-    Conn = #connection{pid=ConnPid, ref=MRef},
-    {noreply, S#state{url=?DISCORD_HOST, token=Token, connection=Conn}};
+    Conn = #connection{pid = ConnPid, ref = MRef},
+    {noreply, S#state{url = ?DISCORD_HOST, token = Token, connection = Conn}};
 handle_cast({send_message, ChannelId, Message}, S0) ->
     ?LOG_INFO("sending message to ~p: ~p", [ChannelId, Message]),
     {S1, _} = send_message_(binary:bin_to_list(ChannelId), Message, S0),
     {noreply, S1};
 handle_cast({send_reaction, ChannelId, MessageId, Reaction}, S0) ->
-    ?LOG_INFO("sending reaction to ~s#~s: ~s",
-              [ChannelId, MessageId, Reaction]),
+    ?LOG_INFO(
+        "sending reaction to ~s#~s: ~s",
+        [ChannelId, MessageId, Reaction]
+    ),
     {S1, _} = send_reaction_(ChannelId, MessageId, Reaction, S0),
     {noreply, S1};
 handle_cast({create_role, GuildId, RoleName}, State) ->
     ?LOG_INFO("creating new role ~s#~s~n", [GuildId, RoleName]),
-    post(<<"/api/guilds/", GuildId/binary, "/roles">>,
-         #{<<"name">> => RoleName,
-           <<"mentionable">> => true},
-         State),
+    post(
+        <<"/api/guilds/", GuildId/binary, "/roles">>,
+        #{
+            <<"name">> => RoleName,
+            <<"mentionable">> => true
+        },
+        State
+    ),
     {noreply, State};
 handle_cast({add_member_role, GuildId, UserId, RoleId}, State) ->
-    hput(<<"/api/guilds/", GuildId/binary, "/members/", UserId/binary,
-           "/roles/", RoleId/binary>>, State),
+    hput(
+        <<"/api/guilds/", GuildId/binary, "/members/", UserId/binary, "/roles/", RoleId/binary>>,
+        State
+    ),
     {noreply, State};
 handle_cast({remove_member_role, GuildId, UserId, RoleId}, State) ->
-    hdelete(<<"/api/guilds/", GuildId/binary, "/members/", UserId/binary,
-              "/roles/", RoleId/binary>>, State),
+    hdelete(
+        <<"/api/guilds/", GuildId/binary, "/members/", UserId/binary, "/roles/", RoleId/binary>>,
+        State
+    ),
     {noreply, State};
 handle_cast({delete_role, GuildId, RoleId}, State) ->
     ?LOG_INFO("deleting role ~s#~s~n", [GuildId, RoleId]),
-    hdelete(<<"/api/guilds/", GuildId/binary, "/roles/", RoleId/binary>>,
-            State),
+    hdelete(
+        <<"/api/guilds/", GuildId/binary, "/roles/", RoleId/binary>>,
+        State
+    ),
     {noreply, State}.
 
-handle_info({gun_down, ConnPid, _, _, _},
-            S=#state{connection=#connection{pid=ConnPid}}) ->
+handle_info(
+    {gun_down, ConnPid, _, _, _},
+    S = #state{connection = #connection{pid = ConnPid}}
+) ->
     ?LOG_INFO("gun lost api connection"),
     gun:await_up(ConnPid),
     ?LOG_INFO("gun regained api connection"),
     {noreply, S};
-handle_info({gun_error, ConnPid, _, Reason},
-            S=#state{connection=#connection{pid=ConnPid}}) ->
+handle_info(
+    {gun_error, ConnPid, _, Reason},
+    S = #state{connection = #connection{pid = ConnPid}}
+) ->
     ?LOG_ERROR("discord api error: ~p~n", [Reason]),
     {stop, error, S};
-handle_info({'DOWN', MRef, process, ConnPid, Reason},
-            S=#state{connection=#connection{pid=ConnPid, ref=MRef}}) ->
+handle_info(
+    {'DOWN', MRef, process, ConnPid, Reason},
+    S = #state{connection = #connection{pid = ConnPid, ref = MRef}}
+) ->
     ?LOG_ERROR("discord api disconnected ~p~n", [Reason]),
     {stop, disconnected, S}.
 
 %% helper functions
 
-hget(Url, #state{connection=Connection, token=Token}) ->
-    StreamRef = gun:get(Connection#connection.pid, Url,
-                        [{<<"authorization">>, "Bot " ++ Token}]),
+hget(Url, #state{connection = Connection, token = Token}) ->
+    StreamRef = gun:get(
+        Connection#connection.pid,
+        Url,
+        [{<<"authorization">>, "Bot " ++ Token}]
+    ),
     jsone:decode(read_body(Connection, StreamRef)).
 
-read_body(#connection{pid=ConnPid}, StreamRef) ->
+read_body(#connection{pid = ConnPid}, StreamRef) ->
     % TODO handle non-200 status
     receive
         {gun_response, ConnPid, StreamRef, fin, _Status, _Headers} ->
@@ -194,40 +229,62 @@ receive_data(ConnPid, StreamRef, Acc) ->
     after 1000 -> throw(timeout)
     end.
 
-post(Uri, Body, #state{connection=Connection, token=Token}) ->
-    StreamRef = gun:post(Connection#connection.pid, Uri,
-                         [{<<"authorization">>, "Bot " ++ Token},
-                          {<<"content-type">>, <<"application/json">>}],
-                         jsone:encode(Body)),
+post(Uri, Body, #state{connection = Connection, token = Token}) ->
+    StreamRef = gun:post(
+        Connection#connection.pid,
+        Uri,
+        [
+            {<<"authorization">>, "Bot " ++ Token},
+            {<<"content-type">>, <<"application/json">>}
+        ],
+        jsone:encode(Body)
+    ),
     jsone:decode(read_body(Connection, StreamRef)).
 
-hput(Uri, #state{connection=Connection, token=Token}) ->
-    StreamRef= gun:put(Connection#connection.pid, Uri,
-                       [{<<"authorization">>, "Bot " ++ Token},
-                        {<<"content-length">>, <<"0">>}]),
+hput(Uri, #state{connection = Connection, token = Token}) ->
+    StreamRef = gun:put(
+        Connection#connection.pid,
+        Uri,
+        [
+            {<<"authorization">>, "Bot " ++ Token},
+            {<<"content-length">>, <<"0">>}
+        ]
+    ),
     case read_body(Connection, StreamRef) of
         no_data -> no_data;
         Data -> jsone:decode(Data)
     end.
 
-hdelete(Uri, #state{connection=Connection, token=Token}) ->
-    StreamRef= gun:delete(Connection#connection.pid, Uri,
-                          [{<<"authorization">>, "Bot " ++ Token},
-                           {<<"content-length">>, <<"0">>}]),
+hdelete(Uri, #state{connection = Connection, token = Token}) ->
+    StreamRef = gun:delete(
+        Connection#connection.pid,
+        Uri,
+        [
+            {<<"authorization">>, "Bot " ++ Token},
+            {<<"content-length">>, <<"0">>}
+        ]
+    ),
     case read_body(Connection, StreamRef) of
         no_data -> no_data;
         Data -> jsone:decode(Data)
     end.
 
 send_message_(ChannelId, Message, State) ->
-    Body = post("/api/channels/" ++ ChannelId ++ "/messages",
-                #{<<"content">> => Message,
-                  <<"allowed_metions">> => [<<"users">>, <<"roles">>]},
-                State),
+    ?LOG_INFO("[afterdusk] send_message_ About to post message: ~p", [Message]),
+    Body = post(
+        "/api/channels/" ++ ChannelId ++ "/messages",
+        #{
+            <<"content">> => Message,
+            <<"allowed_metions">> => [<<"users">>, <<"roles">>]
+        },
+        State
+    ),
+    ?LOG_INFO("[afterdusk] send_message_ Body: ~p", [Body]),
     {State, Body}.
 
 send_reaction_(ChannelId, MessageId, Reaction, State) ->
-    URI = uri_string:normalize(<<"/api/channels/", ChannelId/binary,
-                                 "/messages/", MessageId/binary, "/reactions/",
-                                 Reaction/binary, "/@me">>),
+    URI = uri_string:normalize(
+        <<"/api/channels/", ChannelId/binary, "/messages/", MessageId/binary, "/reactions/",
+            Reaction/binary, "/@me">>
+    ),
     {State, hput(URI, State)}.
